@@ -1,0 +1,125 @@
+RRPair fixes and REST test cases
+=================================
+
+Changed Java files
+------------------
+1. RRPairRequestMatcher.java
+   - Selective matching now evaluates selected RequestParameters, Headers,
+     and QueryParams.
+   - All selected criteria across all configured groups must match.
+   - selected="false" is ignored.
+   - A Selective pair with no selected criteria declines.
+   - Query parameter keys and values are URL-decoded.
+
+2. GroovyScriptResponseGenerator.java
+   - RRPair MatchScript must call matchContext.setResponse(name) AND return true.
+   - return false/null/no value => decline and continue next RRPair.
+   - return true without response => decline; prevents implicit first/default response.
+   - old ReadyAPI-style return "ResponseName" => decline with warning.
+   - TCP GenerateResponse behavior remains unchanged.
+
+No ResponseResolver change is required for the discussed bug after enforcing
+the script contract above:
+- It already walks normal RRPairs in XML order.
+- It already holds endpoint defaultRR out of the normal walk.
+- It already invokes defaultRR only after all normal pairs decline.
+- Non-Script RRPair contract expects one response; the first-response field is
+  not read from RRPair defaultResponse XML.
+
+REST test requests
+------------------
+Endpoint:
+  POST http://localhost:8089/rrpair/test
+
+A) Body + Header + Query combined match
+Headers:
+  Content-Type: application/json
+  X-Channel: web
+URL:
+  /rrpair/test?region=in
+Body:
+  {"account":"12345","amount":250,"customerType":"ANYTHING"}
+Expected:
+  BodyHeaderQueryMatched
+Note:
+  customerType is selected="false", so its value must not affect matching.
+
+B) Combined pair must decline when header is wrong
+Headers:
+  X-Channel: MOBILE
+URL:
+  /rrpair/test?region=in
+Body:
+  {"account":"12345","amount":250}
+Expected:
+  It must NOT return BodyHeaderQueryMatched; chain continues.
+
+C) Combined pair must decline when query is wrong
+Headers:
+  X-Channel: WEB
+URL:
+  /rrpair/test?region=US
+Body:
+  {"account":"12345","amount":250}
+Expected:
+  It must NOT return BodyHeaderQueryMatched; chain continues.
+
+D) Header-only matching
+Headers:
+  X-Test-Mode: HEADER_ONLY
+URL:
+  /rrpair/test
+Body:
+  {}
+Expected:
+  HeaderOnlyMatched
+
+E) Query-only matching
+URL:
+  /rrpair/test?mode=QUERY_ONLY
+Body:
+  {}
+Expected:
+  QueryOnlyMatched
+
+F) Script GOLD
+URL:
+  /rrpair/test
+Body:
+  {"tier":"GOLD"}
+Expected:
+  GoldResponse
+
+G) Script SILVER
+URL:
+  /rrpair/test
+Body:
+  {"tier":"SILVER"}
+Expected:
+  SilverResponse
+
+H) Script returns false
+URL:
+  /rrpair/test
+Body:
+  {"tier":"BRONZE"}
+Expected:
+  RR_SCRIPT declines; later RRPairs/default are considered.
+
+I) Script returns true but does NOT select a response
+URL:
+  /rrpair/test
+Body:
+  {"scriptCase":"NO_RESPONSE"}
+Expected:
+  MUST_NOT_BE_IMPLICIT_DEFAULT must NOT be returned.
+  RR_SCRIPT_TRUE_NO_RESPONSE declines and endpoint defaultRR answers:
+  EndpointDefaultResponse
+
+J) Nothing matches
+URL:
+  /rrpair/test
+Body:
+  {"unknown":"value"}
+Expected:
+  EndpointDefaultResponse from RR_DEFAULT.
